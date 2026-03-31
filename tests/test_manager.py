@@ -1,9 +1,4 @@
-import os
-import sys
-import tempfile
-import importlib
-from pathlib import Path
-from unittest.mock import patch
+import subprocess
 
 import pytest
 
@@ -35,10 +30,18 @@ def test_ensure_dirs_creates_sessions(headroom_dir, monkeypatch):
 
 
 def test_missing_args_exits_nonzero():
-    result = os.system("python3 scripts/manager.py 2>/dev/null")
-    assert result != 0
+    result = subprocess.run(
+        ["python3", "scripts/manager.py"],
+        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+    )
+    assert result.returncode != 0
 
 
 def test_invalid_command_exits_nonzero():
-    result = os.system("python3 scripts/manager.py badcmd 123 2>/dev/null")
-    assert result != 0
+    result = subprocess.run(
+        ["python3", "scripts/manager.py", "badcmd", "123"],
+        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+    )
+    assert result.returncode != 0
