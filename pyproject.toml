@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.pyright]
+pythonPath = "/Users/pc/.venv/bin/python3"
+pythonVersion = "3.11"
+extraPaths = ["."]
