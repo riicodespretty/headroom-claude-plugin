@@ -180,3 +180,138 @@ def test_cleanup_stale_sessions_keeps_live_pids(headroom_dir, monkeypatch):
     m.cleanup_stale_sessions()
     assert (headroom_dir / "sessions" / my_pid).exists()
     m.remove_session(my_pid)  # cleanup
+
+
+def test_start_proxy_raises_if_headroom_missing(headroom_dir, monkeypatch, tmp_path):
+    """Raises FileNotFoundError when ~/.venv/bin/headroom doesn't exist."""
+    import scripts.manager as m
+    from pathlib import Path
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", Path("/nonexistent/headroom"))
+    with pytest.raises(FileNotFoundError, match="headroom not found"):
+        m.start_proxy(8787)
+
+def test_start_proxy_launches_detached(headroom_dir, monkeypatch, tmp_path):
+    """Calls subprocess.Popen with correct args and start_new_session=True."""
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    from pathlib import Path
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    with patch("subprocess.Popen") as mock_popen:
+        mock_popen.return_value = MagicMock()
+        m.start_proxy(8790)
+        call_kwargs = mock_popen.call_args
+        args = call_kwargs[0][0]
+        assert str(fake_bin) in args
+        assert "--port" in args
+        assert "8790" in args or 8790 in args
+        assert call_kwargs[1].get("start_new_session") is True
+
+def test_wait_for_proxy_returns_true_when_healthy(headroom_dir, monkeypatch):
+    """Returns True once health check passes."""
+    import scripts.manager as m
+    from unittest.mock import patch
+    with patch("scripts.manager.check_proxy_health", return_value=True):
+        assert m.wait_for_proxy(8787) is True
+
+def test_wait_for_proxy_raises_on_timeout(headroom_dir, monkeypatch):
+    """Raises TimeoutError when health check never passes within timeout."""
+    import scripts.manager as m
+    from unittest.mock import patch
+    with patch("scripts.manager.check_proxy_health", return_value=False), \
+         patch("time.sleep"):
+        with pytest.raises(TimeoutError, match="did not become healthy"):
+            m.wait_for_proxy(8787, timeout=0.1)
+
+
+def test_update_anthropic_base_url_sets_env(tmp_path, monkeypatch):
+    import scripts.manager as m
+    import json
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"other": "value"}))
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    m.update_anthropic_base_url(8787)
+    result = json.loads(settings_file.read_text())
+    assert result["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8787"
+    assert result["other"] == "value"  # preserved
+
+def test_update_anthropic_base_url_creates_env_block(tmp_path, monkeypatch):
+    import scripts.manager as m
+    import json
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    m.update_anthropic_base_url(9000)
+    result = json.loads(settings_file.read_text())
+    assert result["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:9000"
+
+def test_update_anthropic_base_url_overwrites_existing(tmp_path, monkeypatch):
+    import scripts.manager as m
+    import json
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}}))
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    m.update_anthropic_base_url(8788)
+    result = json.loads(settings_file.read_text())
+    assert result["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8788"
+
+def test_update_anthropic_base_url_raises_if_no_settings(tmp_path, monkeypatch):
+    import scripts.manager as m
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", tmp_path / "nonexistent.json")
+    with pytest.raises(FileNotFoundError):
+        m.update_anthropic_base_url(8787)
+
+
+def test_ensure_mcp_skips_if_sentinel_exists(headroom_dir, monkeypatch):
+    import scripts.manager as m
+    from unittest.mock import patch
+    m.ensure_dirs()
+    sentinel = headroom_dir / ".mcp_installed"
+    sentinel.touch()
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", sentinel)
+    with patch("subprocess.run") as mock_run:
+        m.ensure_mcp_installed()
+        mock_run.assert_not_called()
+
+def test_ensure_mcp_runs_install_when_absent(headroom_dir, monkeypatch, tmp_path):
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    sentinel = headroom_dir / ".mcp_installed"
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", sentinel)
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        m.ensure_mcp_installed()
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert "mcp" in call_args
+        assert "install" in call_args
+
+def test_ensure_mcp_creates_sentinel_on_success(headroom_dir, monkeypatch, tmp_path):
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    sentinel = headroom_dir / ".mcp_installed"
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", sentinel)
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        m.ensure_mcp_installed()
+        assert sentinel.exists()
+
+def test_ensure_mcp_does_not_raise_on_failure(headroom_dir, monkeypatch, tmp_path):
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    sentinel = headroom_dir / ".mcp_installed"
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", sentinel)
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1)
+        m.ensure_mcp_installed()  # must not raise
+        assert not sentinel.exists()

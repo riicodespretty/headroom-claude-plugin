@@ -7,7 +7,9 @@ import json
 import os
 import signal
 import socket
+import subprocess
 import sys
+import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +22,8 @@ SESSIONS_DIR: Path = HEADROOM_DIR / "sessions"
 PORT_FILE: Path = HEADROOM_DIR / "proxy.port"
 MCP_SENTINEL: Path = HEADROOM_DIR / ".mcp_installed"
 LOG_FILE: Path = HEADROOM_DIR / "manager.log"
+
+CLAUDE_SETTINGS: Path = Path.home() / ".claude" / "settings.json"
 
 VENV_BIN: Path = Path.home() / ".venv" / "bin"
 HEADROOM_BIN: Path = VENV_BIN / "headroom"
@@ -62,6 +66,34 @@ def check_proxy_health(port: int) -> bool:
         return False
 
 
+def start_proxy(port: int) -> None:
+    """Launch headroom proxy as a detached background process."""
+    if not HEADROOM_BIN.exists():
+        raise FileNotFoundError(f"headroom not found at {HEADROOM_BIN}")
+
+    env = os.environ.copy()
+    env["PATH"] = str(VENV_BIN) + os.pathsep + env.get("PATH", "")
+    env["VIRTUAL_ENV"] = str(VENV_BIN.parent)
+
+    subprocess.Popen(
+        [str(HEADROOM_BIN), "proxy", "--port", str(port)],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def wait_for_proxy(port: int, timeout: float = 10.0, interval: float = 0.5) -> bool:
+    """Poll /health until healthy or timeout. Raises TimeoutError on timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if check_proxy_health(port):
+            return True
+        time.sleep(interval)
+    raise TimeoutError(f"Headroom proxy on port {port} did not become healthy within {timeout}s")
+
+
 def register_session(pid: str) -> None:
     """Create an empty sentinel file for this session PID."""
     (SESSIONS_DIR / pid).touch()
@@ -88,6 +120,45 @@ def cleanup_stale_sessions() -> None:
 def count_sessions() -> int:
     """Return number of active session files."""
     return sum(1 for _ in SESSIONS_DIR.iterdir())
+
+
+def update_anthropic_base_url(port: int) -> None:
+    """Atomically set env.ANTHROPIC_BASE_URL in ~/.claude/settings.json."""
+    if not CLAUDE_SETTINGS.exists():
+        raise FileNotFoundError(f"Claude settings not found at {CLAUDE_SETTINGS}")
+
+    settings = json.loads(CLAUDE_SETTINGS.read_text())
+    settings.setdefault("env", {})
+    settings["env"]["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
+
+    tmp = CLAUDE_SETTINGS.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(settings, indent=2))
+    os.replace(tmp, CLAUDE_SETTINGS)
+
+
+def ensure_mcp_installed() -> None:
+    """Run 'headroom mcp install' once. Non-fatal if it fails."""
+    ensure_dirs()
+    if MCP_SENTINEL.exists():
+        return
+
+    env = os.environ.copy()
+    env["PATH"] = str(VENV_BIN) + os.pathsep + env.get("PATH", "")
+
+    try:
+        result = subprocess.run(
+            [str(HEADROOM_BIN), "mcp", "install"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            MCP_SENTINEL.touch()
+            log("headroom mcp install succeeded")
+        else:
+            log(f"WARNING: headroom mcp install failed (rc={result.returncode}): {result.stderr.strip()}")
+    except Exception as e:
+        log(f"WARNING: headroom mcp install raised exception: {e}")
 
 
 def cmd_start(pid: str) -> None:
