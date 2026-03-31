@@ -2,6 +2,7 @@
 pythonpath = ["."]
 
 [tool.pyright]
-pythonPath = "/Users/pc/.venv/bin/python3"
+venvPath = "/Users/pc"
+venv = ".venv"
 pythonVersion = "3.11"
 extraPaths = ["."]
