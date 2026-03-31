@@ -1,0 +1,75 @@
+{
+  "planPath": "docs/superpowers/plans/2026-03-31-headroom-plugin.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Plugin Scaffold",
+      "status": "pending",
+      "description": "**Goal:** Create all static config files and directory structure so the plugin is recognized by Claude Code.\n\n**Files:**\n- Create: `.claude-plugin/plugin.json`\n- Create: `hooks/hooks.json`\n- Create: `scripts/__init__.py`\n- Create: `tests/__init__.py`\n- Create: `README.md`\n\n**Acceptance Criteria:**\n- [ ] `.claude-plugin/plugin.json` has all required marketplace fields\n- [ ] `hooks/hooks.json` declares SessionStart and Stop hooks with correct commands\n- [ ] README covers marketplace install, local dev install, requirements\n\n**Verify:** `python3 -c \"import json; json.load(open('.claude-plugin/plugin.json')); json.load(open('hooks/hooks.json')); print('OK')\"` → `OK`\n\n```json:metadata\n{\"files\": [\".claude-plugin/plugin.json\", \"hooks/hooks.json\", \"scripts/__init__.py\", \"tests/__init__.py\", \"README.md\"], \"verifyCommand\": \"python3 -c \\\"import json; json.load(open('.claude-plugin/plugin.json')); json.load(open('hooks/hooks.json')); print('OK')\\\"\", \"acceptanceCriteria\": [\"plugin.json has all marketplace fields\", \"hooks/hooks.json declares SessionStart and Stop hooks\", \"README covers install and usage\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: manager.py Foundation",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** manager.py parses start/stop args, creates ~/.headroom/ dirs, exposes log() helper.\n\n**Files:**\n- Create: `scripts/manager.py`\n- Create: `tests/test_manager.py`\n\n**Acceptance Criteria:**\n- [ ] manager.py start/stop args parse without error\n- [ ] ~/.headroom/sessions/ created on first run\n- [ ] log() writes timestamped entries to manager.log\n- [ ] Missing args exit code 1\n\n**Verify:** `python3 -m pytest tests/test_manager.py::test_log_creates_file_and_writes_timestamp -v` → PASS\n\n```json:metadata\n{\"files\": [\"scripts/manager.py\", \"tests/test_manager.py\"], \"verifyCommand\": \"python3 -m pytest tests/test_manager.py -v\", \"acceptanceCriteria\": [\"arg parsing works\", \"ensure_dirs creates sessions dir\", \"log() writes timestamps\", \"missing args exit 1\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Port Finder + Proxy Health Check",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Implement find_free_port() and check_proxy_health(port).\n\n**Files:**\n- Modify: `scripts/manager.py`\n- Modify: `tests/test_manager.py`\n\n**Acceptance Criteria:**\n- [ ] find_free_port() returns first free port in 8787-8887\n- [ ] find_free_port() raises RuntimeError if all ports occupied\n- [ ] check_proxy_health() returns True on healthy response\n- [ ] check_proxy_health() returns False on error or non-healthy status\n\n**Verify:** `python3 -m pytest tests/test_manager.py -k \"port or health\" -v` → PASS\n\n```json:metadata\n{\"files\": [\"scripts/manager.py\", \"tests/test_manager.py\"], \"verifyCommand\": \"python3 -m pytest tests/test_manager.py -k 'port or health' -v\", \"acceptanceCriteria\": [\"find_free_port returns 8787 when free\", \"find_free_port skips occupied ports\", \"find_free_port raises when all occupied\", \"check_proxy_health returns True on healthy\", \"check_proxy_health returns False on error\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Proxy Start + Health Poll",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Implement start_proxy(port) and wait_for_proxy(port).\n\n**Files:**\n- Modify: `scripts/manager.py`\n- Modify: `tests/test_manager.py`\n\n**Acceptance Criteria:**\n- [ ] start_proxy launches headroom with start_new_session=True\n- [ ] start_proxy prepends ~/.venv/bin to PATH in subprocess env\n- [ ] wait_for_proxy returns True when healthy within timeout\n- [ ] wait_for_proxy raises TimeoutError after 10s\n- [ ] HEADROOM_BIN not found raises FileNotFoundError\n\n**Verify:** `python3 -m pytest tests/test_manager.py -k \"proxy\" -v` → PASS\n\n```json:metadata\n{\"files\": [\"scripts/manager.py\", \"tests/test_manager.py\"], \"verifyCommand\": \"python3 -m pytest tests/test_manager.py -k 'proxy' -v\", \"acceptanceCriteria\": [\"start_proxy launches detached process\", \"start_proxy sets PATH env\", \"wait_for_proxy returns True when healthy\", \"wait_for_proxy raises TimeoutError\", \"missing headroom bin raises FileNotFoundError\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Session Tracking",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Implement register_session, remove_session, cleanup_stale_sessions, count_sessions.\n\n**Files:**\n- Modify: `scripts/manager.py`\n- Modify: `tests/test_manager.py`\n\n**Acceptance Criteria:**\n- [ ] register_session creates empty file sessions/<pid>\n- [ ] remove_session deletes it, no error if missing\n- [ ] cleanup_stale_sessions removes files for dead PIDs\n- [ ] count_sessions returns file count\n\n**Verify:** `python3 -m pytest tests/test_manager.py -k \"session\" -v` → PASS\n\n```json:metadata\n{\"files\": [\"scripts/manager.py\", \"tests/test_manager.py\"], \"verifyCommand\": \"python3 -m pytest tests/test_manager.py -k 'session' -v\", \"acceptanceCriteria\": [\"register_session creates file\", \"remove_session deletes file\", \"remove_session no-ops if missing\", \"cleanup_stale_sessions removes dead PIDs\", \"count_sessions returns correct count\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: settings.json Updater",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Implement update_anthropic_base_url(port) with atomic write.\n\n**Files:**\n- Modify: `scripts/manager.py`\n- Modify: `tests/test_manager.py`\n\n**Acceptance Criteria:**\n- [ ] Sets env.ANTHROPIC_BASE_URL in settings.json\n- [ ] Creates env block if missing\n- [ ] Preserves all other settings\n- [ ] Uses atomic write via os.replace\n- [ ] Raises FileNotFoundError if settings.json missing\n\n**Verify:** `python3 -m pytest tests/test_manager.py -k \"settings\" -v` → PASS\n\n```json:metadata\n{\"files\": [\"scripts/manager.py\", \"tests/test_manager.py\"], \"verifyCommand\": \"python3 -m pytest tests/test_manager.py -k 'settings' -v\", \"acceptanceCriteria\": [\"sets ANTHROPIC_BASE_URL\", \"creates env block if missing\", \"preserves other settings\", \"atomic write via os.replace\", \"raises FileNotFoundError if settings missing\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: MCP One-Time Installer",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Implement ensure_mcp_installed() with sentinel check.\n\n**Files:**\n- Modify: `scripts/manager.py`\n- Modify: `tests/test_manager.py`\n\n**Acceptance Criteria:**\n- [ ] Skips if sentinel exists\n- [ ] Runs headroom mcp install if absent\n- [ ] Creates sentinel on success\n- [ ] Does not raise on failure — logs warning\n\n**Verify:** `python3 -m pytest tests/test_manager.py -k \"mcp\" -v` → PASS\n\n```json:metadata\n{\"files\": [\"scripts/manager.py\", \"tests/test_manager.py\"], \"verifyCommand\": \"python3 -m pytest tests/test_manager.py -k 'mcp' -v\", \"acceptanceCriteria\": [\"skips if sentinel exists\", \"runs mcp install if absent\", \"creates sentinel on success\", \"non-fatal on failure\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Wire cmd_start and cmd_stop",
+      "status": "pending",
+      "blockedBy": [2, 3, 4, 5, 6],
+      "description": "**Goal:** Fill in cmd_start and cmd_stop to call all functions in order.\n\n**Files:**\n- Modify: `scripts/manager.py`\n- Modify: `tests/test_manager.py`\n\n**Acceptance Criteria:**\n- [ ] cmd_start: mcp install → health check → start if needed → register session → write port → update settings\n- [ ] cmd_stop: cleanup stale → remove session → kill proxy if last session\n- [ ] Reuses running proxy when healthy\n- [ ] Leaves proxy running when other sessions remain\n\n**Verify:** `python3 -m pytest tests/test_manager.py -v` → all PASS\n\n```json:metadata\n{\"files\": [\"scripts/manager.py\", \"tests/test_manager.py\"], \"verifyCommand\": \"python3 -m pytest tests/test_manager.py -v\", \"acceptanceCriteria\": [\"cmd_start full flow works\", \"cmd_start reuses running proxy\", \"cmd_stop kills proxy when last session\", \"cmd_stop leaves proxy with remaining sessions\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: dev-install.sh",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Write dev-install.sh to symlink repo into cache and register in settings.json.\n\n**Files:**\n- Create: `dev-install.sh`\n\n**Acceptance Criteria:**\n- [ ] Creates symlink at ~/.claude/plugins/cache/local/headroom/1.0.0/\n- [ ] Adds headroom@local to enabledPlugins\n- [ ] Idempotent\n- [ ] Prints success message\n\n**Verify:** `bash dev-install.sh && ls -la ~/.claude/plugins/cache/local/headroom/1.0.0` → symlink shown\n\n```json:metadata\n{\"files\": [\"dev-install.sh\"], \"verifyCommand\": \"bash dev-install.sh && ls -la ~/.claude/plugins/cache/local/headroom/1.0.0\", \"acceptanceCriteria\": [\"creates symlink into cache\", \"registers headroom@local in enabledPlugins\", \"idempotent\", \"prints success message\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Integration Smoke Test",
+      "status": "pending",
+      "blockedBy": [7, 8],
+      "description": "**Goal:** Manually verify the full end-to-end flow.\n\n**Files:** No code changes.\n\n**Acceptance Criteria:**\n- [ ] manager.py start $$ → proxy healthy, ANTHROPIC_BASE_URL set\n- [ ] manager.py stop $$ → proxy gone\n- [ ] manager.log has timestamped entries\n- [ ] .mcp_installed sentinel exists\n\n**Verify:** `curl -s http://127.0.0.1:$(cat ~/.headroom/proxy.port)/health` → healthy JSON\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"curl -s http://127.0.0.1:$(cat ~/.headroom/proxy.port)/health\", \"acceptanceCriteria\": [\"proxy healthy after start\", \"ANTHROPIC_BASE_URL set in settings.json\", \"proxy gone after stop\", \"manager.log has entries\", \"mcp_installed sentinel exists\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-03-31T00:00:00Z"
+}
