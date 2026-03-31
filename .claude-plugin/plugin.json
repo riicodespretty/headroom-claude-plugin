@@ -1,0 +1,13 @@
+{
+  "name": "headroom",
+  "displayName": "Headroom",
+  "version": "1.0.0",
+  "description": "Auto-starts the Headroom context optimization proxy and routes Claude API traffic through it.",
+  "author": {
+    "name": "TODO: your name",
+    "url": "https://github.com/TODO/headroom-claude-plugin"
+  },
+  "repository": "https://github.com/TODO/headroom-claude-plugin",
+  "license": "MIT",
+  "keywords": ["headroom", "proxy", "context", "optimization", "anthropic"]
+}

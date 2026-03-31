@@ -1,0 +1,28 @@
+{
+  "description": "Headroom proxy lifecycle management",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py start $$",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop $$",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
