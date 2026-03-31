@@ -161,14 +161,81 @@ def ensure_mcp_installed() -> None:
         log(f"WARNING: headroom mcp install raised exception: {e}")
 
 
+def kill_proxy(port: int) -> None:
+    """Find and SIGTERM the process listening on the given port."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True,
+        )
+        pid_str = result.stdout.strip()
+        if pid_str:
+            for pid in pid_str.splitlines():
+                try:
+                    os.kill(int(pid), signal.SIGTERM)
+                    log(f"Sent SIGTERM to proxy PID {pid} on port {port}")
+                except ProcessLookupError:
+                    pass
+    except Exception as e:
+        log(f"WARNING: failed to kill proxy on port {port}: {e}")
+
+
 def cmd_start(pid: str) -> None:
     ensure_dirs()
     log(f"start called for pid={pid}")
+
+    # 1. One-time MCP install
+    ensure_mcp_installed()
+
+    # 2. Check if proxy is already running
+    port: int | None = None
+    if PORT_FILE.exists():
+        try:
+            port = int(PORT_FILE.read_text().strip())
+        except ValueError:
+            port = None
+
+    if port and check_proxy_health(port):
+        log(f"Proxy already healthy on port {port}, reusing")
+    else:
+        # 3. Find free port and start proxy
+        port = find_free_port()
+        start_proxy(port)
+        wait_for_proxy(port)
+        PORT_FILE.write_text(str(port))
+        log(f"Proxy started on port {port}")
+
+    # 4. Register this session
+    register_session(pid)
+
+    # 5. Update ANTHROPIC_BASE_URL in settings.json
+    update_anthropic_base_url(port)
+    log(f"ANTHROPIC_BASE_URL set to http://127.0.0.1:{port}")
 
 
 def cmd_stop(pid: str) -> None:
     ensure_dirs()
     log(f"stop called for pid={pid}")
+
+    # 1. Clean stale sessions
+    cleanup_stale_sessions()
+
+    # 2. Remove own session
+    remove_session(pid)
+
+    # 3. Kill proxy only if no sessions remain
+    if count_sessions() == 0:
+        if PORT_FILE.exists():
+            try:
+                port = int(PORT_FILE.read_text().strip())
+                kill_proxy(port)
+            except (ValueError, Exception) as e:
+                log(f"WARNING: error reading port file: {e}")
+            finally:
+                PORT_FILE.unlink(missing_ok=True)
+        log("No sessions remaining, proxy shut down")
+    else:
+        log(f"{count_sessions()} session(s) still active, proxy kept running")
 
 
 def main() -> None:

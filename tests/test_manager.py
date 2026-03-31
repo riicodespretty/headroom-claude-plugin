@@ -315,3 +315,71 @@ def test_ensure_mcp_does_not_raise_on_failure(headroom_dir, monkeypatch, tmp_pat
         mock_run.return_value = MagicMock(returncode=1)
         m.ensure_mcp_installed()  # must not raise
         assert not sentinel.exists()
+
+
+def test_cmd_start_full_flow_new_proxy(headroom_dir, monkeypatch, tmp_path):
+    """cmd_start launches proxy, registers session, updates settings when no proxy running."""
+    import scripts.manager as m
+    import json
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    sentinel = headroom_dir / ".mcp_installed"
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", sentinel)
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    with patch("scripts.manager.check_proxy_health", return_value=False), \
+         patch("scripts.manager.find_free_port", return_value=8787), \
+         patch("scripts.manager.start_proxy") as mock_start, \
+         patch("scripts.manager.wait_for_proxy", return_value=True), \
+         patch("subprocess.run", return_value=MagicMock(returncode=0)):
+        m.cmd_start("42")
+    assert (headroom_dir / "sessions" / "42").exists()
+    assert (headroom_dir / "proxy.port").read_text() == "8787"
+    result = json.loads(settings_file.read_text())
+    assert result["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8787"
+    mock_start.assert_called_once_with(8787)
+
+def test_cmd_start_reuses_running_proxy(headroom_dir, monkeypatch, tmp_path):
+    """cmd_start skips start_proxy when proxy already healthy."""
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    (headroom_dir / "proxy.port").parent.mkdir(parents=True, exist_ok=True)
+    (headroom_dir / "proxy.port").write_text("8787")
+    (headroom_dir / ".mcp_installed").touch()
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    with patch("scripts.manager.check_proxy_health", return_value=True), \
+         patch("scripts.manager.start_proxy") as mock_start:
+        m.cmd_start("43")
+    mock_start.assert_not_called()
+    assert (headroom_dir / "sessions" / "43").exists()
+
+def test_cmd_stop_kills_proxy_when_last_session(headroom_dir, monkeypatch):
+    """cmd_stop kills proxy and removes port file when no sessions remain."""
+    import scripts.manager as m
+    from unittest.mock import patch
+    m.ensure_dirs()
+    m.register_session("99")
+    (headroom_dir / "proxy.port").write_text("8787")
+    with patch("scripts.manager.kill_proxy") as mock_kill:
+        m.cmd_stop("99")
+    mock_kill.assert_called_once_with(8787)
+    assert not (headroom_dir / "proxy.port").exists()
+
+def test_cmd_stop_leaves_proxy_when_sessions_remain(headroom_dir, monkeypatch):
+    """cmd_stop does not kill proxy when other sessions are still running."""
+    import scripts.manager as m
+    import os
+    from unittest.mock import patch
+    m.ensure_dirs()
+    m.register_session(str(os.getpid()))  # live session
+    m.register_session("88")
+    (headroom_dir / "proxy.port").write_text("8787")
+    with patch("scripts.manager.kill_proxy") as mock_kill:
+        m.cmd_stop("88")
+    mock_kill.assert_not_called()
+    m.remove_session(str(os.getpid()))  # cleanup
