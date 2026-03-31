@@ -59,7 +59,7 @@ Full marketplace metadata: `name`, `version`, `description`, `author`, `reposito
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py start",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py start $$",
             "timeout": 30
           }
         ]
@@ -70,7 +70,7 @@ Full marketplace metadata: `name`, `version`, `description`, `author`, `reposito
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop $$",
             "timeout": 10
           }
         ]
@@ -80,7 +80,7 @@ Full marketplace metadata: `name`, `version`, `description`, `author`, `reposito
 }
 ```
 
-`$CLAUDE_PID` is read from the environment inside `manager.py` (Claude Code sets it).
+The shell PID (`$$`) is passed as `sys.argv[1]` to `manager.py`. This is used as the session identity for the session tracking file.
 
 ## manager.py — Subcommands
 
@@ -102,7 +102,7 @@ Full marketplace metadata: `name`, `version`, `description`, `author`, `reposito
    - Poll `GET /health` every 0.5s for up to 10 seconds. If never healthy, log and exit non-zero
    - Write the port to `~/.headroom/proxy.port`
 
-5. **Register session** — create empty file `~/.headroom/sessions/<CLAUDE_PID>`
+5. **Register session** — create empty file `~/.headroom/sessions/<shell-pid>`
 
 6. **Update settings.json** — atomic JSON update of `env.ANTHROPIC_BASE_URL`:
    - Read `~/.claude/settings.json`
@@ -113,7 +113,7 @@ Full marketplace metadata: `name`, `version`, `description`, `author`, `reposito
 
 1. **Stale session cleanup** — scan `~/.headroom/sessions/`; for each file, parse the PID from the filename and check `os.kill(pid, 0)`. Remove any files whose process is no longer running.
 
-2. **Remove own session** — delete `~/.headroom/sessions/<CLAUDE_PID>`
+2. **Remove own session** — delete `~/.headroom/sessions/<shell-pid>`
 
 3. **Count remaining sessions** — list `~/.headroom/sessions/`. If any remain, exit (proxy stays up).
 
