@@ -122,14 +122,24 @@ def count_sessions() -> int:
     return sum(1 for _ in SESSIONS_DIR.iterdir())
 
 
-def update_anthropic_base_url(port: int) -> None:
-    """Atomically set env.ANTHROPIC_BASE_URL in ~/.claude/settings.json."""
+def update_anthropic_base_url(port: int | None) -> None:
+    """Atomically set or clear env.ANTHROPIC_BASE_URL in ~/.claude/settings.json.
+
+    If port is None, clears the ANTHROPIC_BASE_URL variable.
+    """
     if not CLAUDE_SETTINGS.exists():
         raise FileNotFoundError(f"Claude settings not found at {CLAUDE_SETTINGS}")
 
     settings = json.loads(CLAUDE_SETTINGS.read_text())
     settings.setdefault("env", {})
-    settings["env"]["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
+
+    if port is None:
+        # Clear the variable
+        if "ANTHROPIC_BASE_URL" in settings["env"]:
+            del settings["env"]["ANTHROPIC_BASE_URL"]
+    else:
+        # Set the variable
+        settings["env"]["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
 
     tmp = CLAUDE_SETTINGS.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(settings, indent=2))
@@ -233,6 +243,12 @@ def cmd_stop(pid: str) -> None:
                 log(f"WARNING: error reading port file: {e}")
             finally:
                 PORT_FILE.unlink(missing_ok=True)
+        # Clear ANTHROPIC_BASE_URL now that proxy is down
+        try:
+            update_anthropic_base_url(None)
+            log("Cleared ANTHROPIC_BASE_URL")
+        except Exception as e:
+            log(f"WARNING: failed to clear ANTHROPIC_BASE_URL: {e}")
         log("No sessions remaining, proxy shut down")
     else:
         log(f"{count_sessions()} session(s) still active, proxy kept running")

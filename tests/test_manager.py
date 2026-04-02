@@ -256,6 +256,17 @@ def test_update_anthropic_base_url_overwrites_existing(tmp_path, monkeypatch):
     result = json.loads(settings_file.read_text())
     assert result["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8788"
 
+def test_update_anthropic_base_url_clears_when_none(tmp_path, monkeypatch):
+    import scripts.manager as m
+    import json
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "OTHER": "value"}}))
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    m.update_anthropic_base_url(None)
+    result = json.loads(settings_file.read_text())
+    assert "ANTHROPIC_BASE_URL" not in result["env"]
+    assert result["env"]["OTHER"] == "value"
+
 def test_update_anthropic_base_url_raises_if_no_settings(tmp_path, monkeypatch):
     import scripts.manager as m
     monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", tmp_path / "nonexistent.json")
@@ -358,10 +369,13 @@ def test_cmd_start_reuses_running_proxy(headroom_dir, monkeypatch, tmp_path):
     mock_start.assert_not_called()
     assert (headroom_dir / "sessions" / "43").exists()
 
-def test_cmd_stop_kills_proxy_when_last_session(headroom_dir, monkeypatch):
+def test_cmd_stop_kills_proxy_when_last_session(headroom_dir, monkeypatch, tmp_path):
     """cmd_stop kills proxy and removes port file when no sessions remain."""
     import scripts.manager as m
     from unittest.mock import patch
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
     m.ensure_dirs()
     m.register_session("99")
     (headroom_dir / "proxy.port").write_text("8787")
@@ -383,3 +397,19 @@ def test_cmd_stop_leaves_proxy_when_sessions_remain(headroom_dir, monkeypatch):
         m.cmd_stop("88")
     mock_kill.assert_not_called()
     m.remove_session(str(os.getpid()))  # cleanup
+
+def test_cmd_stop_clears_anthropic_base_url_when_last_session(headroom_dir, monkeypatch, tmp_path):
+    """cmd_stop clears ANTHROPIC_BASE_URL when last session exits."""
+    import scripts.manager as m
+    import json
+    from unittest.mock import patch
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}}))
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    m.ensure_dirs()
+    m.register_session("99")
+    (headroom_dir / "proxy.port").write_text("8787")
+    with patch("scripts.manager.kill_proxy"):
+        m.cmd_stop("99")
+    result = json.loads(settings_file.read_text())
+    assert "ANTHROPIC_BASE_URL" not in result.get("env", {})
