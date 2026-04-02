@@ -51,5 +51,32 @@ tmp.write_text(json.dumps(settings, indent=2))
 os.replace(tmp, settings_path)
 PYEOF
 
+
+# 3. Kill running proxy (if any) before removing state directory
+PORT_FILE="$HOME/.headroom/proxy.port"
+if [ -f "$PORT_FILE" ]; then
+  PROXY_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+  if [ -n "$PROXY_PORT" ]; then
+    PROXY_PIDS="$(lsof -ti ":$PROXY_PORT" 2>/dev/null || true)"
+    if [ -n "$PROXY_PIDS" ]; then
+      echo "$PROXY_PIDS" | xargs kill -TERM 2>/dev/null || true
+      echo "  ✓ Stopped proxy on port $PROXY_PORT"
+    else
+      echo "  ✓ No proxy process found on port $PROXY_PORT"
+    fi
+  fi
+else
+  echo "  ✓ No running proxy (port file absent)"
+fi
+
+# 4. Clean up runtime state directory
+HEADROOM_DIR="$HOME/.headroom"
+if [ -d "$HEADROOM_DIR" ]; then
+  rm -rf "$HEADROOM_DIR"
+  echo "  ✓ Removed runtime state directory $HEADROOM_DIR"
+else
+  echo "  ✓ Runtime state directory already absent"
+fi
+
 echo ""
 echo "Done! Restart Claude Code to deactivate the headroom plugin."

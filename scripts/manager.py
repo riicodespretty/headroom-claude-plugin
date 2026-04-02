@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
@@ -22,6 +23,7 @@ SESSIONS_DIR: Path = HEADROOM_DIR / "sessions"
 PORT_FILE: Path = HEADROOM_DIR / "proxy.port"
 MCP_SENTINEL: Path = HEADROOM_DIR / ".mcp_installed"
 LOG_FILE: Path = HEADROOM_DIR / "manager.log"
+LOCK_FILE: Path = HEADROOM_DIR / "manager.lock"
 
 CLAUDE_SETTINGS: Path = Path.home() / ".claude" / "settings.json"
 
@@ -113,8 +115,10 @@ def cleanup_stale_sessions() -> None:
         try:
             pid = int(f.name)
             os.kill(pid, 0)  # 0 = check existence only, raises if dead
-        except (ValueError, ProcessLookupError, PermissionError):
+        except (ValueError, ProcessLookupError):
             f.unlink(missing_ok=True)
+        except PermissionError:
+            pass  # Process exists but owned by another user — keep the session file
 
 
 def count_sessions() -> int:
@@ -189,7 +193,7 @@ def kill_proxy(port: int, grace_period: float = 3.0) -> None:
                 log(f"Sent SIGTERM to proxy PID {pid} on port {port}")
             except ProcessLookupError:
                 pass
-        # Wait for processes to exit
+        # Wait for processes to exit; SIGKILL if still alive after grace period
         deadline = time.monotonic() + grace_period
         for pid in pids:
             while time.monotonic() < deadline:
@@ -198,6 +202,13 @@ def kill_proxy(port: int, grace_period: float = 3.0) -> None:
                     time.sleep(0.1)
                 except ProcessLookupError:
                     break
+            else:
+                # Grace period expired — force-kill
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    log(f"Sent SIGKILL to proxy PID {pid} (did not exit within {grace_period}s)")
+                except ProcessLookupError:
+                    pass
     except Exception as e:
         log(f"WARNING: failed to kill proxy on port {port}: {e}")
 
@@ -209,41 +220,54 @@ def cmd_start(pid: str) -> None:
     # 1. One-time MCP install
     ensure_mcp_installed()
 
-    # 2. Check if proxy is already running
-    port: int | None = None
-    if PORT_FILE.exists():
+    # 2. Check if proxy is already running (serialized with flock to prevent
+    #    concurrent starts from racing to find_free_port and launching two
+    #    proxies on the same port)
+    with LOCK_FILE.open("a") as _lock:
+        fcntl.flock(_lock, fcntl.LOCK_EX)
+        port: int | None = None
+        if PORT_FILE.exists():
+            try:
+                port = int(PORT_FILE.read_text().strip())
+            except ValueError:
+                port = None
+
+        if port and check_proxy_health(port):
+            log(f"Proxy already healthy on port {port}, reusing")
+        else:
+            # Kill stale proxy and remove port file before starting a fresh one
+            if port:
+                log(f"Proxy on port {port} is unhealthy, stopping it")
+                kill_proxy(port)
+                PORT_FILE.unlink(missing_ok=True)
+            # 3. Find free port and start proxy
+            port = find_free_port()
+            start_proxy(port)
+            try:
+                wait_for_proxy(port)
+            except TimeoutError:
+                kill_proxy(port)
+                raise
+            PORT_FILE.write_text(str(port))
+            log(f"Proxy started on port {port}")
+
+        # 4. Register this session
+        register_session(pid)
+
+        # 5. Update ANTHROPIC_BASE_URL in settings.json (inside lock to prevent
+        #    concurrent processes from racing on the same .json.tmp path)
         try:
-            port = int(PORT_FILE.read_text().strip())
-        except ValueError:
-            port = None
-
-    if port and check_proxy_health(port):
-        log(f"Proxy already healthy on port {port}, reusing")
-    else:
-        # Kill stale proxy and remove port file before starting a fresh one
-        if port:
-            log(f"Proxy on port {port} is unhealthy, stopping it")
-            kill_proxy(port)
-            PORT_FILE.unlink(missing_ok=True)
-        # 3. Find free port and start proxy
-        port = find_free_port()
-        start_proxy(port)
-        wait_for_proxy(port)
-        PORT_FILE.write_text(str(port))
-        log(f"Proxy started on port {port}")
-
-    # 4. Register this session
-    register_session(pid)
-
-    # 5. Update ANTHROPIC_BASE_URL in settings.json (only if not already set)
-    settings = json.loads(CLAUDE_SETTINGS.read_text())
-    current_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL")
-    expected_url = f"http://127.0.0.1:{port}"
-    if current_url != expected_url:
-        update_anthropic_base_url(port)
-        log(f"ANTHROPIC_BASE_URL set to {expected_url}")
-    else:
-        log(f"ANTHROPIC_BASE_URL already correct ({expected_url}), skipping write")
+            settings = json.loads(CLAUDE_SETTINGS.read_text())
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            log(f"WARNING: could not read {CLAUDE_SETTINGS}: {e} — skipping URL update")
+            return
+        current_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL")
+        expected_url = f"http://127.0.0.1:{port}"
+        if current_url != expected_url:
+            update_anthropic_base_url(port)
+            log(f"ANTHROPIC_BASE_URL set to {expected_url}")
+        else:
+            log(f"ANTHROPIC_BASE_URL already correct ({expected_url}), skipping write")
 
 
 def cmd_stop(pid: str) -> None:
@@ -263,7 +287,7 @@ def cmd_stop(pid: str) -> None:
             try:
                 port = int(PORT_FILE.read_text().strip())
                 kill_proxy(port)
-            except (ValueError, Exception) as e:
+            except Exception as e:
                 log(f"WARNING: error reading port file: {e}")
             finally:
                 PORT_FILE.unlink(missing_ok=True)

@@ -15,6 +15,7 @@ def headroom_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("scripts.manager.PORT_FILE", d / "proxy.port")
     monkeypatch.setattr("scripts.manager.MCP_SENTINEL", d / ".mcp_installed")
     monkeypatch.setattr("scripts.manager.LOG_FILE", d / "manager.log")
+    monkeypatch.setattr("scripts.manager.LOCK_FILE", d / "manager.lock")
     return d
 
 
@@ -413,3 +414,125 @@ def test_cmd_stop_clears_anthropic_base_url_when_last_session(headroom_dir, monk
         m.cmd_stop("99")
     result = json.loads(settings_file.read_text())
     assert "ANTHROPIC_BASE_URL" not in result.get("env", {})
+
+
+def test_cleanup_stale_sessions_ignores_permission_error(headroom_dir, monkeypatch):
+    """Keeps session file when os.kill raises PermissionError (process exists, wrong owner)."""
+    import scripts.manager as m
+    import os
+    from unittest.mock import patch
+    m.ensure_dirs()
+    session_file = headroom_dir / "sessions" / "42"
+    session_file.touch()
+    with patch("os.kill", side_effect=PermissionError):
+        m.cleanup_stale_sessions()
+    assert session_file.exists()
+
+
+def test_cmd_start_kills_proxy_on_wait_timeout(headroom_dir, monkeypatch, tmp_path):
+    """cmd_start kills the spawned proxy and re-raises TimeoutError if wait_for_proxy times out."""
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", headroom_dir / ".mcp_installed")
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+    with patch("scripts.manager.check_proxy_health", return_value=False), \
+         patch("scripts.manager.find_free_port", return_value=8787), \
+         patch("scripts.manager.start_proxy"), \
+         patch("scripts.manager.wait_for_proxy", side_effect=TimeoutError("timeout")), \
+         patch("scripts.manager.kill_proxy") as mock_kill, \
+         patch("subprocess.run", return_value=MagicMock(returncode=0)):
+        with pytest.raises(TimeoutError):
+            m.cmd_start("42")
+    mock_kill.assert_called_once_with(8787)
+    assert not (headroom_dir / "proxy.port").exists()
+
+
+def test_cmd_start_handles_missing_settings(headroom_dir, monkeypatch, tmp_path):
+    """cmd_start logs a warning and returns without error when settings.json is missing."""
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", headroom_dir / ".mcp_installed")
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", tmp_path / "nonexistent.json")
+    with patch("scripts.manager.check_proxy_health", return_value=False), \
+         patch("scripts.manager.find_free_port", return_value=8787), \
+         patch("scripts.manager.start_proxy"), \
+         patch("scripts.manager.wait_for_proxy"), \
+         patch("subprocess.run", return_value=MagicMock(returncode=0)):
+        m.cmd_start("42")  # must not raise
+    assert (headroom_dir / "sessions" / "42").exists()
+    assert (headroom_dir / "proxy.port").read_text() == "8787"
+
+
+def test_kill_proxy_sends_sigkill_after_grace_period(headroom_dir, monkeypatch):
+    """SIGKILL is sent if process is still alive after grace_period expires."""
+    import scripts.manager as m
+    import signal
+    from unittest.mock import patch, call
+
+    kill_calls = []
+
+    def mock_kill(pid, sig):
+        kill_calls.append((pid, sig))
+        # os.kill(pid, 0) — probe — always returns (process never dies)
+
+    with patch("subprocess.run") as mock_run, \
+         patch("os.kill", side_effect=mock_kill), \
+         patch("time.sleep"), \
+         patch("time.monotonic", side_effect=[0.0, 0.0, 5.0, 5.0, 10.0]):
+        mock_run.return_value = MagicMock(stdout="1234\n", returncode=0)
+        m.kill_proxy(8787, grace_period=3.0)
+
+    sigs_sent = [sig for (pid, sig) in kill_calls]
+    assert signal.SIGTERM in sigs_sent
+    assert signal.SIGKILL in sigs_sent
+
+
+def test_cmd_start_concurrent_uses_lock(headroom_dir, monkeypatch, tmp_path):
+    """cmd_start serializes via LOCK_FILE: after one thread starts the proxy and
+    writes PORT_FILE, subsequent threads see it as healthy and skip start_proxy."""
+    import scripts.manager as m
+    import threading
+    from unittest.mock import patch, MagicMock
+
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", headroom_dir / ".mcp_installed")
+    monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
+
+    start_calls = []
+
+    def counting_start_proxy(port):
+        start_calls.append(port)
+        # Simulate proxy becoming available after start
+        (headroom_dir / "proxy.port").parent.mkdir(parents=True, exist_ok=True)
+        (headroom_dir / "proxy.port").write_text(str(port))
+
+    def health_check(port):
+        # Healthy only if port file exists (i.e. a previous thread already started it)
+        return (headroom_dir / "proxy.port").exists()
+
+    with patch("scripts.manager.check_proxy_health", side_effect=health_check), \
+         patch("scripts.manager.find_free_port", return_value=8787), \
+         patch("scripts.manager.start_proxy", side_effect=counting_start_proxy), \
+         patch("scripts.manager.wait_for_proxy"), \
+         patch("subprocess.run", return_value=MagicMock(returncode=0)):
+
+        threads = [threading.Thread(target=m.cmd_start, args=(str(i),)) for i in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    # Only one proxy should have been started (the rest serialized and found it healthy)
+    assert len(start_calls) == 1

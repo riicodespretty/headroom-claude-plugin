@@ -3,11 +3,10 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py start $$",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py start $PPID",
             "timeout": 30
           }
         ]
@@ -18,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop $$",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop $PPID",
             "timeout": 10
           }
         ]
@@ -29,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop $$",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop $PPID",
             "timeout": 10
           }
         ]
