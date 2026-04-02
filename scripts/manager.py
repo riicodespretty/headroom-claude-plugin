@@ -84,12 +84,12 @@ def start_proxy(port: int) -> None:
     )
 
 
-def wait_for_proxy(port: int, timeout: float = 10.0, interval: float = 0.5) -> bool:
+def wait_for_proxy(port: int, timeout: float = 10.0, interval: float = 0.5) -> None:
     """Poll /health until healthy or timeout. Raises TimeoutError on timeout."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if check_proxy_health(port):
-            return True
+            return
         time.sleep(interval)
     raise TimeoutError(f"Headroom proxy on port {port} did not become healthy within {timeout}s")
 
@@ -171,21 +171,33 @@ def ensure_mcp_installed() -> None:
         log(f"WARNING: headroom mcp install raised exception: {e}")
 
 
-def kill_proxy(port: int) -> None:
-    """Find and SIGTERM the process listening on the given port."""
+def kill_proxy(port: int, grace_period: float = 3.0) -> None:
+    """Find, SIGTERM, and wait for the process listening on the given port."""
     try:
         result = subprocess.run(
             ["lsof", "-ti", f":{port}"],
             capture_output=True, text=True,
         )
         pid_str = result.stdout.strip()
-        if pid_str:
-            for pid in pid_str.splitlines():
+        if not pid_str:
+            return
+        pids = []
+        for pid in pid_str.splitlines():
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+                pids.append(int(pid))
+                log(f"Sent SIGTERM to proxy PID {pid} on port {port}")
+            except ProcessLookupError:
+                pass
+        # Wait for processes to exit
+        deadline = time.monotonic() + grace_period
+        for pid in pids:
+            while time.monotonic() < deadline:
                 try:
-                    os.kill(int(pid), signal.SIGTERM)
-                    log(f"Sent SIGTERM to proxy PID {pid} on port {port}")
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
                 except ProcessLookupError:
-                    pass
+                    break
     except Exception as e:
         log(f"WARNING: failed to kill proxy on port {port}: {e}")
 
@@ -208,6 +220,10 @@ def cmd_start(pid: str) -> None:
     if port and check_proxy_health(port):
         log(f"Proxy already healthy on port {port}, reusing")
     else:
+        # Kill stale proxy before starting a fresh one
+        if port:
+            log(f"Proxy on port {port} is unhealthy, stopping it")
+            kill_proxy(port)
         # 3. Find free port and start proxy
         port = find_free_port()
         start_proxy(port)
@@ -218,9 +234,15 @@ def cmd_start(pid: str) -> None:
     # 4. Register this session
     register_session(pid)
 
-    # 5. Update ANTHROPIC_BASE_URL in settings.json
-    update_anthropic_base_url(port)
-    log(f"ANTHROPIC_BASE_URL set to http://127.0.0.1:{port}")
+    # 5. Update ANTHROPIC_BASE_URL in settings.json (only if not already set)
+    settings = json.loads(CLAUDE_SETTINGS.read_text())
+    current_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL")
+    expected_url = f"http://127.0.0.1:{port}"
+    if current_url != expected_url:
+        update_anthropic_base_url(port)
+        log(f"ANTHROPIC_BASE_URL set to {expected_url}")
+    else:
+        log(f"ANTHROPIC_BASE_URL already correct ({expected_url}), skipping write")
 
 
 def cmd_stop(pid: str) -> None:
@@ -234,7 +256,8 @@ def cmd_stop(pid: str) -> None:
     remove_session(pid)
 
     # 3. Kill proxy only if no sessions remain
-    if count_sessions() == 0:
+    remaining = count_sessions()
+    if remaining == 0:
         if PORT_FILE.exists():
             try:
                 port = int(PORT_FILE.read_text().strip())
@@ -247,11 +270,11 @@ def cmd_stop(pid: str) -> None:
         try:
             update_anthropic_base_url(None)
             log("Cleared ANTHROPIC_BASE_URL")
-        except Exception as e:
+        except (FileNotFoundError, json.JSONDecodeError) as e:
             log(f"WARNING: failed to clear ANTHROPIC_BASE_URL: {e}")
         log("No sessions remaining, proxy shut down")
     else:
-        log(f"{count_sessions()} session(s) still active, proxy kept running")
+        log(f"{remaining} session(s) still active, proxy kept running")
 
 
 def main() -> None:

@@ -213,7 +213,7 @@ def test_wait_for_proxy_returns_true_when_healthy(headroom_dir, monkeypatch):
     import scripts.manager as m
     from unittest.mock import patch
     with patch("scripts.manager.check_proxy_health", return_value=True):
-        assert m.wait_for_proxy(8787) is True
+        assert m.wait_for_proxy(8787) is None
 
 def test_wait_for_proxy_raises_on_timeout(headroom_dir, monkeypatch):
     """Raises TimeoutError when health check never passes within timeout."""
