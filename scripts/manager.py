@@ -220,10 +220,11 @@ def cmd_start(pid: str) -> None:
     if port and check_proxy_health(port):
         log(f"Proxy already healthy on port {port}, reusing")
     else:
-        # Kill stale proxy before starting a fresh one
+        # Kill stale proxy and remove port file before starting a fresh one
         if port:
             log(f"Proxy on port {port} is unhealthy, stopping it")
             kill_proxy(port)
+            PORT_FILE.unlink(missing_ok=True)
         # 3. Find free port and start proxy
         port = find_free_port()
         start_proxy(port)
