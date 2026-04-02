@@ -23,7 +23,7 @@ bash dev-install.sh
 
 ## How It Works
 
-1. On session start: sources venv, runs `headroom mcp install` once, starts proxy (or reuses if running), writes session PID file, sets `ANTHROPIC_BASE_URL` in `~/.claude/settings.json`
+1. On session start: sources venv, runs `headroom mcp install` once, starts proxy (or reuses if running), writes session PID file, sets `ANTHROPIC_BASE_URL` in `~/.claude/settings.json`. If the proxy fails to become healthy within 30 s, it is killed by PID (not just by port, in case it hasn't bound yet) and the session exits non-zero.
 2. On session stop or session end: removes PID file, kills proxy only if no other sessions remain, clears `ANTHROPIC_BASE_URL`
 
 ## Uninstalling
