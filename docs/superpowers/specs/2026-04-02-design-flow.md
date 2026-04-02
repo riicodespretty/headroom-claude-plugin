@@ -54,8 +54,12 @@ Claude Code process starts (PID=N)
         │    ├─ find_free_port() — probe 8787..8887 via TCP connect
         │    │   └─ all occupied → raise RuntimeError, exit non-zero
         │    ├─ start_proxy(port) — Popen detached, stdout/stderr /dev/null
-        │    ├─ wait_for_proxy(port) — poll /health every 0.5s, 10s timeout
-        │    │   └─ timeout → kill_proxy(port), raise TimeoutError, exit non-zero
+        │    │   └─ returns spawned PID
+        │    ├─ wait_for_proxy(port) — poll /health every 0.5s, 30s timeout
+        │    │   └─ timeout → SIGTERM spawned PID directly (process may not have
+        │    │               bound port yet, so lsof would find nothing)
+        │    │             + kill_proxy(port) belt-and-suspenders for child procs
+        │    │             + raise TimeoutError, exit non-zero
         │    └─ write port to ~/.headroom/proxy.port
         │
         ├─6─ register_session(N)
@@ -110,7 +114,7 @@ Claude Code process exits (PID=N)
 ```
 ABSENT ──[start, no healthy port]──► STARTING
 STARTING ──[/health ok]──► RUNNING
-STARTING ──[timeout 10s]──► ABSENT (error logged, exit non-zero)
+STARTING ──[timeout 30s]──► ABSENT (error logged, exit non-zero)
 RUNNING ──[start, healthy port found]──► RUNNING (reuse, no-op)
 RUNNING ──[last session stops]──► STOPPING
 STOPPING ──[SIGTERM + optional SIGKILL after 3s grace]──► ABSENT
@@ -152,7 +156,7 @@ STALE ──[cleanup_stale_sessions()]──► REMOVED
 | `headroom mcp install` writes bare `"headroom"` command | `_patch_claude_json_headroom_command` rewrites to `~/.venv/bin/headroom` (Claude Code spawns MCP servers without venv) |
 | Proxy unhealthy on start | Restart on new port |
 | All ports 8787–8887 occupied | `RuntimeError` → exit non-zero |
-| Proxy startup timeout (10s) | Orphaned proxy killed, `TimeoutError` → exit non-zero |
+| Proxy startup timeout (30s) | Spawned PID sent SIGTERM directly (pre-bind), then port-based `kill_proxy()` for any child procs; `TimeoutError` → exit non-zero |
 | `settings.json` missing on start | Warning logged, URL update skipped (non-fatal) |
 | `settings.json` missing on stop | Exception caught, warning logged (non-fatal) |
 | PID file is stale (crashed session) | Cleaned at next `start` or `stop` |

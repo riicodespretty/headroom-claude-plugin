@@ -69,8 +69,8 @@ def check_proxy_health(port: int) -> bool:
         return False
 
 
-def start_proxy(port: int) -> None:
-    """Launch headroom proxy as a detached background process."""
+def start_proxy(port: int) -> int:
+    """Launch headroom proxy as a detached background process. Returns the PID."""
     if not HEADROOM_BIN.exists():
         raise FileNotFoundError(f"headroom not found at {HEADROOM_BIN}")
 
@@ -78,16 +78,17 @@ def start_proxy(port: int) -> None:
     env["PATH"] = str(VENV_BIN) + os.pathsep + env.get("PATH", "")
     env["VIRTUAL_ENV"] = str(VENV_BIN.parent)
 
-    subprocess.Popen(
+    proc = subprocess.Popen(
         [str(HEADROOM_BIN), "proxy", "--port", str(port)],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    return proc.pid
 
 
-def wait_for_proxy(port: int, timeout: float = 10.0, interval: float = 0.5) -> None:
+def wait_for_proxy(port: int, timeout: float = 30.0, interval: float = 0.5) -> None:
     """Poll /health until healthy or timeout. Raises TimeoutError on timeout."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -281,10 +282,18 @@ def cmd_start(pid: str) -> None:
                 PORT_FILE.unlink(missing_ok=True)
             # 3. Find free port and start proxy
             port = find_free_port()
-            start_proxy(port)
+            proxy_pid = start_proxy(port)
             try:
                 wait_for_proxy(port)
             except TimeoutError:
+                # Kill by PID directly: the process may not have bound the port
+                # yet, so lsof-based kill_proxy() would find nothing.
+                try:
+                    os.kill(proxy_pid, signal.SIGTERM)
+                    log(f"Sent SIGTERM to proxy PID {proxy_pid} after timeout")
+                except ProcessLookupError:
+                    pass
+                # Also attempt port-based kill as belt-and-suspenders
                 kill_proxy(port)
                 raise
             PORT_FILE.write_text(str(port))

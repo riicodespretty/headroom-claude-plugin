@@ -1,4 +1,5 @@
 import json
+import signal
 import socket
 import subprocess
 import urllib.error
@@ -200,8 +201,11 @@ def test_start_proxy_launches_detached(headroom_dir, monkeypatch, tmp_path):
     fake_bin.touch()
     monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
     with patch("subprocess.Popen") as mock_popen:
-        mock_popen.return_value = MagicMock()
-        m.start_proxy(8790)
+        fake_proc = MagicMock()
+        fake_proc.pid = 12345
+        mock_popen.return_value = fake_proc
+        pid = m.start_proxy(8790)
+        assert pid == 12345
         call_kwargs = mock_popen.call_args
         args = call_kwargs[0][0]
         assert str(fake_bin) in args
@@ -344,7 +348,7 @@ def test_cmd_start_full_flow_new_proxy(headroom_dir, monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
     with patch("scripts.manager.check_proxy_health", return_value=False), \
          patch("scripts.manager.find_free_port", return_value=8787), \
-         patch("scripts.manager.start_proxy") as mock_start, \
+         patch("scripts.manager.start_proxy", return_value=99999) as mock_start, \
          patch("scripts.manager.wait_for_proxy", return_value=True), \
          patch("subprocess.run", return_value=MagicMock(returncode=0)):
         m.cmd_start("42")
@@ -442,12 +446,14 @@ def test_cmd_start_kills_proxy_on_wait_timeout(headroom_dir, monkeypatch, tmp_pa
     monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", settings_file)
     with patch("scripts.manager.check_proxy_health", return_value=False), \
          patch("scripts.manager.find_free_port", return_value=8787), \
-         patch("scripts.manager.start_proxy"), \
+         patch("scripts.manager.start_proxy", return_value=99999), \
          patch("scripts.manager.wait_for_proxy", side_effect=TimeoutError("timeout")), \
          patch("scripts.manager.kill_proxy") as mock_kill, \
+         patch("scripts.manager.os.kill") as mock_os_kill, \
          patch("subprocess.run", return_value=MagicMock(returncode=0)):
         with pytest.raises(TimeoutError):
             m.cmd_start("42")
+    mock_os_kill.assert_any_call(99999, signal.SIGTERM)
     mock_kill.assert_called_once_with(8787)
     assert not (headroom_dir / "proxy.port").exists()
 
@@ -463,7 +469,7 @@ def test_cmd_start_handles_missing_settings(headroom_dir, monkeypatch, tmp_path)
     monkeypatch.setattr("scripts.manager.CLAUDE_SETTINGS", tmp_path / "nonexistent.json")
     with patch("scripts.manager.check_proxy_health", return_value=False), \
          patch("scripts.manager.find_free_port", return_value=8787), \
-         patch("scripts.manager.start_proxy"), \
+         patch("scripts.manager.start_proxy", return_value=99999), \
          patch("scripts.manager.wait_for_proxy"), \
          patch("subprocess.run", return_value=MagicMock(returncode=0)):
         m.cmd_start("42")  # must not raise
@@ -517,6 +523,7 @@ def test_cmd_start_concurrent_uses_lock(headroom_dir, monkeypatch, tmp_path):
         # Simulate proxy becoming available after start
         (headroom_dir / "proxy.port").parent.mkdir(parents=True, exist_ok=True)
         (headroom_dir / "proxy.port").write_text(str(port))
+        return 99999
 
     def health_check(port):
         # Healthy only if port file exists (i.e. a previous thread already started it)
