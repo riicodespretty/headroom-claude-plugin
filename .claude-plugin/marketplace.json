@@ -1,0 +1,15 @@
+{
+  "name": "riicodespretty",
+"owner": {
+    "name": "riicodespretty"
+  },
+  "plugins": [
+    {
+      "name": "headroom",
+      "source": {
+        "source": "github",
+        "repo": "riicodespretty/headroom-claude-plugin"
+      }
+    }
+  ]
+}
