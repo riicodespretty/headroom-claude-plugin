@@ -536,3 +536,87 @@ def test_cmd_start_concurrent_uses_lock(headroom_dir, monkeypatch, tmp_path):
 
     # Only one proxy should have been started (the rest serialized and found it healthy)
     assert len(start_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# _patch_claude_json_headroom_command
+# ---------------------------------------------------------------------------
+
+def test_patch_claude_json_rewrites_bare_command(headroom_dir, monkeypatch, tmp_path):
+    import scripts.manager as m
+    import json
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(json.dumps({
+        "mcpServers": {"headroom": {"command": "headroom", "args": []}}
+    }))
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.CLAUDE_JSON", claude_json)
+    m._patch_claude_json_headroom_command()
+    data = json.loads(claude_json.read_text())
+    assert data["mcpServers"]["headroom"]["command"] == str(fake_bin)
+
+
+def test_patch_claude_json_skips_when_already_patched(headroom_dir, monkeypatch, tmp_path):
+    import scripts.manager as m
+    import json
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(json.dumps({
+        "mcpServers": {"headroom": {"command": str(fake_bin), "args": []}}
+    }))
+    mtime_before = claude_json.stat().st_mtime
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.CLAUDE_JSON", claude_json)
+    m._patch_claude_json_headroom_command()
+    # File should not have been rewritten
+    assert claude_json.stat().st_mtime == mtime_before
+
+
+def test_patch_claude_json_noop_when_file_missing(headroom_dir, monkeypatch, tmp_path):
+    import scripts.manager as m
+    missing = tmp_path / "nonexistent.json"
+    monkeypatch.setattr("scripts.manager.CLAUDE_JSON", missing)
+    # Must not raise
+    m._patch_claude_json_headroom_command()
+
+
+def test_patch_claude_json_noop_on_malformed_json(headroom_dir, monkeypatch, tmp_path):
+    import scripts.manager as m
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text("not json {{{")
+    monkeypatch.setattr("scripts.manager.CLAUDE_JSON", claude_json)
+    # Must not raise
+    m._patch_claude_json_headroom_command()
+
+
+def test_ensure_mcp_calls_patch_on_success(headroom_dir, monkeypatch, tmp_path):
+    """ensure_mcp_installed calls _patch_claude_json_headroom_command after successful install."""
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    sentinel = headroom_dir / ".mcp_installed"
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", sentinel)
+    with patch("subprocess.run", return_value=MagicMock(returncode=0)), \
+         patch("scripts.manager._patch_claude_json_headroom_command") as mock_patch:
+        m.ensure_mcp_installed()
+        mock_patch.assert_called_once()
+
+
+def test_ensure_mcp_does_not_call_patch_on_failure(headroom_dir, monkeypatch, tmp_path):
+    """ensure_mcp_installed does NOT call _patch_claude_json_headroom_command when install fails."""
+    import scripts.manager as m
+    from unittest.mock import patch, MagicMock
+    fake_bin = tmp_path / "headroom"
+    fake_bin.touch()
+    sentinel = headroom_dir / ".mcp_installed"
+    monkeypatch.setattr("scripts.manager.HEADROOM_BIN", fake_bin)
+    monkeypatch.setattr("scripts.manager.MCP_SENTINEL", sentinel)
+    with patch("subprocess.run", return_value=MagicMock(returncode=1)), \
+         patch("scripts.manager._patch_claude_json_headroom_command") as mock_patch:
+        m.ensure_mcp_installed()
+        mock_patch.assert_not_called()

@@ -26,6 +26,7 @@ LOG_FILE: Path = HEADROOM_DIR / "manager.log"
 LOCK_FILE: Path = HEADROOM_DIR / "manager.lock"
 
 CLAUDE_SETTINGS: Path = Path.home() / ".claude" / "settings.json"
+CLAUDE_JSON: Path = Path.home() / ".claude.json"
 
 VENV_BIN: Path = Path.home() / ".venv" / "bin"
 HEADROOM_BIN: Path = VENV_BIN / "headroom"
@@ -150,6 +151,43 @@ def update_anthropic_base_url(port: int | None) -> None:
     os.replace(tmp, CLAUDE_SETTINGS)
 
 
+def _patch_claude_json_headroom_command() -> None:
+    """Rewrite mcpServers.headroom.command in ~/.claude.json to the full venv path.
+
+    headroom mcp install writes a bare "headroom" command, but Claude Code spawns
+    MCP servers without the venv on PATH, so we must use the absolute binary path.
+    Non-fatal: logs a warning and returns if the file is missing or malformed.
+    """
+    if not CLAUDE_JSON.exists():
+        log("WARNING: ~/.claude.json not found, skipping command patch")
+        return
+    try:
+        data = json.loads(CLAUDE_JSON.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"WARNING: could not read ~/.claude.json: {e}")
+        return
+
+    mcp_servers = data.get("mcpServers", {})
+    headroom_entry = mcp_servers.get("headroom", {})
+    current_command = headroom_entry.get("command", "")
+
+    if current_command == str(HEADROOM_BIN):
+        return  # Already patched
+
+    headroom_entry["command"] = str(HEADROOM_BIN)
+    mcp_servers["headroom"] = headroom_entry
+    data["mcpServers"] = mcp_servers
+
+    tmp = CLAUDE_JSON.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2))
+        os.replace(tmp, CLAUDE_JSON)
+        log(f"Patched ~/.claude.json mcpServers.headroom.command → {HEADROOM_BIN}")
+    except OSError as e:
+        log(f"WARNING: could not write ~/.claude.json: {e}")
+        tmp.unlink(missing_ok=True)
+
+
 def ensure_mcp_installed() -> None:
     """Run 'headroom mcp install' once. Non-fatal if it fails."""
     ensure_dirs()
@@ -169,6 +207,7 @@ def ensure_mcp_installed() -> None:
         if result.returncode == 0:
             MCP_SENTINEL.touch()
             log("headroom mcp install succeeded")
+            _patch_claude_json_headroom_command()
         else:
             log(f"WARNING: headroom mcp install failed (rc={result.returncode}): {result.stderr.strip()}")
     except Exception as e:
