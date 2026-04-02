@@ -62,7 +62,7 @@ def check_proxy_health(port: int) -> bool:
     """Return True if the proxy at the given port reports healthy."""
     try:
         url = f"http://127.0.0.1:{port}/health"
-        with urllib.request.urlopen(url, timeout=2) as resp:
+        with urllib.request.urlopen(url, timeout=10) as resp:
             data = json.loads(resp.read())
             return data.get("status") == "healthy"
     except Exception:
