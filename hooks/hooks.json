@@ -23,6 +23,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/manager.py stop $$",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

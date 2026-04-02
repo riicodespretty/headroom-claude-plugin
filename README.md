@@ -8,20 +8,11 @@ Automatically starts the [Headroom](https://github.com/headroom-ai/headroom) con
 - `headroom` installed at `~/.venv/bin/headroom`
   - Install: `python3 -m venv ~/.venv && ~/.venv/bin/pip install headroom`
 
-## Marketplace Install
+## Install
 
-Add to `~/.claude/settings.json`:
-```json
-{
-  "pluginSources": {
-    "headroom-plugin": {
-      "repo": "TODO/headroom-claude-plugin"
-    }
-  },
-  "enabledPlugins": {
-    "headroom@headroom-plugin": true
-  }
-}
+```
+/plugin marketplace add https://github.com/riicodespretty/headroom-claude-plugin.git
+/plugin install headroom@riicodespretty
 ```
 
 ## Local Dev Install
@@ -33,7 +24,11 @@ bash dev-install.sh
 ## How It Works
 
 1. On session start: sources venv, runs `headroom mcp install` once, starts proxy (or reuses if running), writes session PID file, sets `ANTHROPIC_BASE_URL` in `~/.claude/settings.json`
-2. On session stop: removes PID file, kills proxy only if no other sessions remain
+2. On session stop or session end: removes PID file, kills proxy only if no other sessions remain, clears `ANTHROPIC_BASE_URL`
+
+## Uninstalling
+
+Run `/plugin uninstall headroom@riicodespretty` then **restart Claude Code**. There is no uninstall hook in the Claude Code plugin system, so the proxy is not automatically stopped on uninstall — it will be cleaned up when the current session ends normally. Starting a new session after uninstalling will not start a new proxy.
 
 ## Runtime State
 
