@@ -1,3 +1,26 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# AI Agents Directories
+.claude
+.cursor
+.agent
+.agents
+.codex
+.gemini
+.opencode
+
+# AI IDEs Directories
+.windsurf
+.trae
+.zed
+.conductor
+
+# AI Agent Files
+AGENTS.md
+.*/skills/
+
+# Claude Code Settings
+CLAUDE.md
+*.local.*
